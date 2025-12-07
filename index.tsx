@@ -2,7 +2,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import bridge from '@vkontakte/vk-bridge';
-import './index.css'; // Если у вас есть стили, оставьте
 
 // --- ЛОВУШКА ОШИБОК ДЛЯ МОБИЛЬНЫХ ---
 // Этот код покажет ошибку на экране, если React сломается
