@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameState, QuizRound, CartoonEntry } from './types';
 import { CARTOON_DATABASE } from './data/cartoons';
-import * as QuestionService from './services/geminiService'; // Using existing file for local logic
+import * as QuestionService from './services/geminiService';
 import Button from './components/Button';
 import RetroTV from './components/RetroTV';
 
@@ -32,17 +32,27 @@ const App: React.FC = () => {
   
   // UI States
   const [errorMsg, setErrorMsg] = useState<string>("");
-  const [isChecking, setIsChecking] = useState<string | null>(null); // Stores the answer currently being checked
+  const [isChecking, setIsChecking] = useState<string | null>(null);
 
   // Initialize VK Bridge when App mounts
   useEffect(() => {
-    if (window.vkBridge) {
-      window.vkBridge.send('VKWebAppInit')
-        .then(() => console.log('VK Bridge Initialized'))
-        .catch((e: any) => console.error('VK Bridge Init Failed', e));
-    } else {
-      console.warn("VK Bridge not found in window object");
-    }
+    const initVK = () => {
+      if (window.vkBridge) {
+        window.vkBridge.send('VKWebAppInit')
+          .then(() => console.log('VK Bridge Initialized'))
+          .catch((e: any) => console.error('VK Bridge Init Failed', e));
+      } else {
+        // Fallback/Retry if script loads slightly later
+        console.warn("VK Bridge not found immediately, retrying...");
+        setTimeout(() => {
+           if (window.vkBridge) {
+             window.vkBridge.send('VKWebAppInit');
+           }
+        }, 500);
+      }
+    };
+    
+    initVK();
   }, []);
 
   const startNewRound = useCallback(async () => {
@@ -51,10 +61,7 @@ const App: React.FC = () => {
     setIsChecking(null);
     
     try {
-      // 1. Pick a random cartoon from our local database
       const randomCartoon: CartoonEntry = CARTOON_DATABASE[Math.floor(Math.random() * CARTOON_DATABASE.length)];
-      
-      // 2. Generate wrong answers locally
       const data = await QuestionService.generateQuizQuestion(randomCartoon);
       
       const round: QuizRound = {
@@ -63,7 +70,6 @@ const App: React.FC = () => {
       
       setCurrentRound(round);
 
-      // Shuffle options
       const allOptions = [data.correctAnswer, ...data.wrongAnswers];
       setShuffledOptions(shuffleArray(allOptions));
 
@@ -87,10 +93,8 @@ const App: React.FC = () => {
   const handleAnswer = (answer: string) => {
     if (!currentRound || isChecking) return;
 
-    // Start suspense effect
     setIsChecking(answer);
 
-    // Delay to create immersion/suspense
     setTimeout(() => {
       const isCorrect = answer === currentRound.question.correctAnswer;
       
@@ -110,7 +114,7 @@ const App: React.FC = () => {
       setQuestionsAnsweredInLevel(prev => prev + 1);
       setIsChecking(null);
       setGameState(GameState.RESULT);
-    }, 1500); // 1.5 seconds delay
+    }, 1500);
   };
 
   const handleNextStep = () => {
@@ -134,8 +138,7 @@ const App: React.FC = () => {
   // --- Render Views ---
 
   const renderMenu = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 animate-fade-in relative overflow-hidden">
-      {/* Background Decor */}
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-8 bg-[#cc0000] z-0"></div>
       <div className="absolute bottom-0 left-0 w-full h-8 bg-[#cc0000] z-0"></div>
       
@@ -213,14 +216,7 @@ const App: React.FC = () => {
           <div className="grid grid-cols-1 gap-3 pt-2">
             {shuffledOptions.map((option, idx) => {
               const isSelected = isChecking === option;
-              let btnVariant: 'secondary' | 'primary' = 'secondary';
               
-              if (isSelected) {
-                // While checking, show a special visual state (Gold/Yellow style simulated by override or custom CSS)
-                // For now, we will use inline style override or a specific variant logic if we had one.
-                // We'll stick to 'primary' (Red) but add animation class
-              }
-
               return (
                 <Button 
                   key={idx} 
@@ -273,7 +269,7 @@ const App: React.FC = () => {
   };
 
   const renderLevelComplete = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 animate-fade-in bg-[#f0ead6]">
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 bg-[#f0ead6]">
       <div className="relative z-10 border-4 border-[#d4af37] p-8 bg-white shadow-2xl max-w-sm w-full">
         <div className="space-y-4 mb-6">
           <div className="text-4xl text-[#d4af37]">★ ★ ★</div>
