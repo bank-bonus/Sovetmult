@@ -34,6 +34,17 @@ const App: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [isChecking, setIsChecking] = useState<string | null>(null); // Stores the answer currently being checked
 
+  // Initialize VK Bridge when App mounts
+  useEffect(() => {
+    if (window.vkBridge) {
+      window.vkBridge.send('VKWebAppInit')
+        .then(() => console.log('VK Bridge Initialized'))
+        .catch((e: any) => console.error('VK Bridge Init Failed', e));
+    } else {
+      console.warn("VK Bridge not found in window object");
+    }
+  }, []);
+
   const startNewRound = useCallback(async () => {
     setGameState(GameState.LOADING);
     setErrorMsg("");
