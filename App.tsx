@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import bridge from '@vkontakte/vk-bridge'; // Импортируем официальный мост
 import { GameState, QuizRound, CartoonEntry } from './types';
 import { CARTOON_DATABASE } from './data/cartoons';
 import * as QuestionService from './services/geminiService';
@@ -36,23 +37,18 @@ const App: React.FC = () => {
 
   // Initialize VK Bridge when App mounts
   useEffect(() => {
-    const initVK = () => {
-      if (window.vkBridge) {
-        window.vkBridge.send('VKWebAppInit')
-          .then(() => console.log('VK Bridge Initialized'))
-          .catch((e: any) => console.error('VK Bridge Init Failed', e));
-      } else {
-        // Fallback/Retry if script loads slightly later
-        console.warn("VK Bridge not found immediately, retrying...");
-        setTimeout(() => {
-           if (window.vkBridge) {
-             window.vkBridge.send('VKWebAppInit');
-           }
-        }, 500);
+    async function init() {
+      try {
+        // Отправляем событие инициализации через библиотеку
+        await bridge.send('VKWebAppInit');
+        console.log('VK Bridge Initialized successfully');
+      } catch (error) {
+        console.error('VK Bridge Init Failed', error);
+        // Даже если ошибка (например, запуск не в ВК, а локально), 
+        // не блокируем игру, чтобы можно было тестить
       }
-    };
-    
-    initVK();
+    }
+    init();
   }, []);
 
   const startNewRound = useCallback(async () => {
@@ -61,9 +57,20 @@ const App: React.FC = () => {
     setIsChecking(null);
     
     try {
+      // Проверка на пустую базу данных
+      if (!CARTOON_DATABASE || CARTOON_DATABASE.length === 0) {
+        throw new Error("База данных мультфильмов пуста");
+      }
+
       const randomCartoon: CartoonEntry = CARTOON_DATABASE[Math.floor(Math.random() * CARTOON_DATABASE.length)];
+      
+      // Генерация вопроса
       const data = await QuestionService.generateQuizQuestion(randomCartoon);
       
+      if (!data || !data.correctAnswer) {
+        throw new Error("Некорректный ответ от генератора вопросов");
+      }
+
       const round: QuizRound = {
         question: data,
       };
@@ -75,9 +82,9 @@ const App: React.FC = () => {
 
       setGameState(GameState.PLAYING);
 
-    } catch (err) {
-      console.error(err);
-      setErrorMsg("Ошибка программы передач. Попробуйте позже.");
+    } catch (err: any) {
+      console.error("Ошибка в startNewRound:", err);
+      setErrorMsg(err.message || "Ошибка программы передач. Попробуйте позже.");
       setGameState(GameState.ERROR);
     }
   }, []);
@@ -138,7 +145,7 @@ const App: React.FC = () => {
   // --- Render Views ---
 
   const renderMenu = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 relative overflow-hidden">
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 relative overflow-hidden bg-[#f0ead6]">
       <div className="absolute top-0 left-0 w-full h-8 bg-[#cc0000] z-0"></div>
       <div className="absolute bottom-0 left-0 w-full h-8 bg-[#cc0000] z-0"></div>
       
@@ -176,10 +183,10 @@ const App: React.FC = () => {
   );
 
   const renderError = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-6">
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-6 bg-[#f0ead6]">
       <div className="text-6xl text-[#cc0000]">☭</div>
       <h2 className="text-2xl font-bold text-[#1a1a1a] uppercase border-b-4 border-[#cc0000] pb-2">Сбой Вещания</h2>
-      <p className="text-[#555] max-w-xs font-mono text-sm">{errorMsg}</p>
+      <p className="text-[#555] max-w-xs font-mono text-sm break-words">{errorMsg}</p>
       <Button onClick={handleStartGame} variant="secondary">Повторить попытку</Button>
     </div>
   );
@@ -255,7 +262,10 @@ const App: React.FC = () => {
           </div>
 
           <div className="w-48 mx-auto grayscale hover:grayscale-0 transition-all duration-500">
-             <img src={currentRound.question.imageUrl} className="rounded border-4 border-[#1a1a1a]" alt="result" />
+             {/* Проверка на наличие картинки, чтобы не упало */}
+             {currentRound.question.imageUrl && (
+                 <img src={currentRound.question.imageUrl} className="rounded border-4 border-[#1a1a1a]" alt="result" />
+             )}
           </div>
 
           <div className="w-full space-y-4 pt-4">
