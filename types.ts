@@ -23,3 +23,10 @@ export interface QuizRound {
   userSelectedAnswer?: string;
   isCorrect?: boolean;
 }
+
+// Global declaration for VK Bridge
+declare global {
+  interface Window {
+    vkBridge: any;
+  }
+}
