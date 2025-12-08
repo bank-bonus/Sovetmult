@@ -4,6 +4,7 @@ export enum GameState {
   PLAYING = 'PLAYING',
   RESULT = 'RESULT',
   LEVEL_COMPLETE = 'LEVEL_COMPLETE',
+  GAME_OVER = 'GAME_OVER', // Новое состояние
   ERROR = 'ERROR'
 }
 
@@ -24,12 +25,8 @@ export interface QuizRound {
   isCorrect?: boolean;
 }
 
-// Global declaration for VK Bridge
 declare global {
   interface Window {
-    vkBridge: {
-      send: (method: string, params?: any) => Promise<any>;
-      subscribe: (callback: (event: any) => void) => void;
-    };
+    vkBridge: any;
   }
 }
