@@ -27,6 +27,9 @@ export interface QuizRound {
 // Global declaration for VK Bridge
 declare global {
   interface Window {
-    vkBridge: any;
+    vkBridge: {
+      send: (method: string, params?: any) => Promise<any>;
+      subscribe: (callback: (event: any) => void) => void;
+    };
   }
 }
