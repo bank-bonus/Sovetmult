@@ -1,297 +1,277 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { GameState, QuizRound, CartoonEntry } from './types';
-import { CARTOON_DATABASE } from './data/cartoons';
-import * as QuestionService from './services/geminiService';
-import { vkService } from './services/vkService'; // Импортируем наш сервис
-import Button from './components/Button';
-import RetroTV from './components/RetroTV';
-
-const QUESTIONS_PER_LEVEL = 5;
-const MAX_LIVES = 3;
-
-// Shuffles an array using Fisher-Yates algorithm
-function shuffleArray<T>(array: T[]): T[] {
-  const newArray = [...array];
-  for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-  }
-  return newArray;
-}
+import React, { useState, useMemo } from 'react';
+import { Box, Code2, Download, Gamepad2, Layers, Loader2, Sparkles, Wand2 } from 'lucide-react';
+import FileUploader, { FileList } from './components/FileUploader';
+import GeneratedPreview from './components/GeneratedPreview';
+import { AppState, LoadingScreenData, UploadedFile } from './types';
+import { generateLoadingScreen } from './services/geminiService';
+import { bundleGame } from './services/bundlerService';
+import { readFileAsText } from './utils/fileUtils';
 
 const App: React.FC = () => {
-  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
-  const [currentRound, setCurrentRound] = useState<QuizRound | null>(null);
-  const [shuffledOptions, setShuffledOptions] = useState<string[]>([]);
-  
-  // Stats & Lives
-  const [score, setScore] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [lives, setLives] = useState(MAX_LIVES);
-  
-  // Level System
-  const [level, setLevel] = useState(1);
-  const [questionsAnsweredInLevel, setQuestionsAnsweredInLevel] = useState(0);
-  
-  // UI States
-  const [errorMsg, setErrorMsg] = useState<string>("");
-  const [isChecking, setIsChecking] = useState<string | null>(null);
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
+  const [mainEntryFile, setMainEntryFile] = useState<string | null>(null);
+  const [loadingScreenData, setLoadingScreenData] = useState<LoadingScreenData | null>(null);
+  const [finalBundleUrl, setFinalBundleUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Инициализация VK при старте
-  useEffect(() => {
-    vkService.init();
-  }, []);
-
-  const startNewRound = useCallback(async () => {
-    setGameState(GameState.LOADING);
-    setErrorMsg("");
-    setIsChecking(null);
+  const handleFilesSelected = (newFiles: UploadedFile[]) => {
+    // Merge new files, avoiding duplicates
+    setFiles(prev => {
+      const existingNames = new Set(prev.map(f => f.name));
+      const uniqueNew = newFiles.filter(f => !existingNames.has(f.name));
+      return [...prev, ...uniqueNew];
+    });
     
+    // Auto-detect index.html
+    if (!mainEntryFile) {
+      const index = newFiles.find(f => f.name.toLowerCase() === 'index.html');
+      if (index) setMainEntryFile(index.name);
+    }
+  };
+
+  const handleRemoveFile = (name: string) => {
+    setFiles(prev => prev.filter(f => f.name !== name));
+    if (mainEntryFile === name) setMainEntryFile(null);
+  };
+
+  const handleGenerate = async () => {
+    if (files.length === 0) {
+      setError("Please upload game files first.");
+      return;
+    }
+
+    setAppState(AppState.ANALYZING);
+    setError(null);
+
     try {
-      const randomCartoon: CartoonEntry = CARTOON_DATABASE[Math.floor(Math.random() * CARTOON_DATABASE.length)];
-      const data = await QuestionService.generateQuizQuestion(randomCartoon);
+      // Create context for Gemini
+      // Concatenate text from a few key files (HTML/JS) to give context
+      let context = "";
+      const textFiles = files.filter(f => f.type === 'html' || f.type === 'js');
       
-      const round: QuizRound = { question: data };
-      setCurrentRound(round);
-
-      const allOptions = [data.correctAnswer, ...data.wrongAnswers];
-      setShuffledOptions(shuffleArray(allOptions));
-
-      setGameState(GameState.PLAYING);
-
-    } catch (err) {
-      console.error(err);
-      setErrorMsg("Ошибка программы передач. Попробуйте позже.");
-      setGameState(GameState.ERROR);
-    }
-  }, []);
-
-  const handleStartGame = () => {
-    setScore(0);
-    setStreak(0);
-    setLevel(1);
-    setLives(MAX_LIVES);
-    setQuestionsAnsweredInLevel(0);
-    startNewRound();
-  };
-
-  const handleAnswer = (answer: string) => {
-    if (!currentRound || isChecking) return;
-
-    setIsChecking(answer);
-
-    setTimeout(() => {
-      const isCorrect = answer === currentRound.question.correctAnswer;
-      
-      setCurrentRound({
-        ...currentRound,
-        userSelectedAnswer: answer,
-        isCorrect
-      });
-
-      if (isCorrect) {
-        setScore(s => s + 100 + (streak * 10)); 
-        setStreak(s => s + 1);
-        vkService.taptic('success');
-      } else {
-        setStreak(0);
-        setLives(l => l - 1);
-        vkService.taptic('error');
+      for (const f of textFiles.slice(0, 3)) { // Limit to first 3 text files to save tokens/time
+        const content = await readFileAsText(f.file);
+        context += `\n--- FILE: ${f.name} ---\n${content.slice(0, 2000)}`; // Slice large files
       }
 
-      setQuestionsAnsweredInLevel(prev => prev + 1);
-      setIsChecking(null);
+      setAppState(AppState.GENERATING);
+      const result = await generateLoadingScreen(context);
+      setLoadingScreenData(result);
+      setAppState(AppState.PREVIEW);
       
-      // Если жизни кончились - показываем экран Game Over
-      if (!isCorrect && lives - 1 <= 0) {
-        setGameState(GameState.GAME_OVER);
-      } else {
-        setGameState(GameState.RESULT);
-      }
-    }, 1500);
-  };
-
-  const handleNextStep = () => {
-    if (questionsAnsweredInLevel >= QUESTIONS_PER_LEVEL) {
-      setGameState(GameState.LEVEL_COMPLETE);
-    } else {
-      startNewRound();
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to generate loading screen. Please check API Key and try again.");
+      setAppState(AppState.IDLE);
     }
   };
 
-  const handleNextLevel = async () => {
-    // Показываем рекламу между уровнями
-    await vkService.showInterstitial();
+  const handleBundle = async () => {
+    if (!loadingScreenData || !mainEntryFile) return;
     
-    setLevel(l => l + 1);
-    setQuestionsAnsweredInLevel(0);
-    startNewRound();
-  };
+    const entryFileObj = files.find(f => f.name === mainEntryFile);
+    if (!entryFileObj) {
+      setError("Main entry file not found.");
+      return;
+    }
 
-  const handleRevive = async () => {
-    // Реклама за жизнь
-    const success = await vkService.showRewarded();
-    if (success) {
-      setLives(1); // Даем 1 жизнь
-      setGameState(GameState.RESULT); // Возвращаем на экран результата (откуда нажмут "Далее")
+    setAppState(AppState.BUNDLING);
+    try {
+      const bundledHtml = await bundleGame(files, entryFileObj, loadingScreenData);
+      const blob = new Blob([bundledHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      setFinalBundleUrl(url);
+      setAppState(AppState.COMPLETE);
+    } catch (e: any) {
+      console.error(e);
+      setError("Failed to bundle files.");
+      setAppState(AppState.PREVIEW);
     }
   };
-
-  const handleShare = () => {
-    vkService.shareWall(score);
-  };
-
-  const handleBackToMenu = () => {
-    setGameState(GameState.MENU);
-  };
-
-  // --- Helpers ---
-  const renderHearts = () => (
-    <div className="flex space-x-1">
-      {[...Array(MAX_LIVES)].map((_, i) => (
-        <span key={i} className={`text-xl ${i < lives ? 'text-[#cc0000]' : 'text-gray-300'}`}>
-          {i < lives ? '♥' : '♡'}
-        </span>
-      ))}
-    </div>
-  );
-
-  // --- Render Views ---
-
-  const renderMenu = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center space-y-8 animate-fade-in relative overflow-hidden">
-      <div className="relative z-10 border-4 border-[#cc0000] p-8 bg-[#f0ead6] shadow-2xl max-w-sm w-full">
-        <h1 className="text-5xl font-display text-[#cc0000] uppercase leading-none drop-shadow-sm mb-4">
-          СОЮЗ<br/>МУЛЬТ<br/>КВИЗ
-        </h1>
-        <p className="text-[#1a1a1a] font-bold tracking-widest text-sm uppercase mb-8">
-          Викторина СССР
-        </p>
-        <Button onClick={handleStartGame} variant="primary">НАЧАТЬ ИГРУ</Button>
-      </div>
-    </div>
-  );
-
-  const renderLoading = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#f0ead6]">
-      <RetroTV loading={true} />
-      <p className="mt-4 font-mono text-sm uppercase">Загрузка эфира...</p>
-    </div>
-  );
-
-  const renderPlaying = () => (
-    <div className="flex flex-col min-h-screen bg-[#f0ead6]">
-      {/* Header */}
-      <div className="bg-[#cc0000] text-[#f0ead6] px-4 py-2 shadow-md flex justify-between items-center z-10 sticky top-0 border-b-4 border-[#a00000]">
-        <div className="flex flex-col items-start">
-           <span className="text-[10px] uppercase opacity-75">Очки</span>
-           <span className="font-bold">{score}</span>
-        </div>
-        <div className="flex flex-col items-center">
-             {renderHearts()}
-             <span className="text-[10px] uppercase mt-1">Уровень {level}</span>
-        </div>
-      </div>
-
-      <div className="flex-1 p-4 flex flex-col justify-center max-w-md mx-auto w-full space-y-6">
-        <RetroTV imageSrc={currentRound?.question.imageUrl} />
-        
-        <div className="space-y-3">
-          <div className="bg-[#1a1a1a] text-[#f0ead6] text-center py-2 px-4 uppercase font-bold text-sm -skew-x-6">
-             Что это за мультфильм?
-          </div>
-          <div className="grid grid-cols-1 gap-2">
-            {shuffledOptions.map((option, idx) => {
-              const isSelected = isChecking === option;
-              return (
-                <Button 
-                  key={idx} 
-                  onClick={() => handleAnswer(option)} 
-                  variant={isSelected ? 'primary' : 'secondary'}
-                  disabled={isChecking !== null}
-                  className={`text-left ${isSelected ? 'animate-pulse bg-[#d4af37] text-black' : ''}`}
-                >
-                  {option}
-                </Button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderResult = () => {
-    if (!currentRound) return null;
-    const isWin = currentRound.isCorrect;
-
-    return (
-      <div className="flex flex-col min-h-screen bg-[#f0ead6] p-4 items-center justify-center">
-        <div className="border-4 border-[#1a1a1a] p-6 w-full max-w-md bg-white text-center shadow-[8px_8px_0_#cc0000]">
-          <div className={`text-3xl font-display uppercase mb-4 ${isWin ? 'text-[#4a7c59]' : 'text-[#cc0000]'}`}>
-            {isWin ? 'ВЕРНО!' : 'НЕВЕРНО!'}
-          </div>
-          
-          <p className="text-xs uppercase text-gray-500 mb-1">Правильный ответ:</p>
-          <p className="text-xl font-bold mb-6">{currentRound.question.correctAnswer}</p>
-          
-          <div className="w-32 mx-auto mb-6">
-             <img src={currentRound.question.imageUrl} className="rounded border-2 border-black" alt="" />
-          </div>
-
-          <Button onClick={handleNextStep} variant="primary">
-            {questionsAnsweredInLevel >= QUESTIONS_PER_LEVEL ? 'К ИТОГАМ' : 'ДАЛЕЕ'}
-          </Button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderGameOver = () => (
-    <div className="flex flex-col min-h-screen bg-[#1a1a1a] p-6 items-center justify-center text-[#f0ead6]">
-      <div className="text-6xl mb-4">📺</div>
-      <h2 className="text-4xl font-display uppercase text-[#cc0000] mb-2">КОНЕЦ ЭФИРА</h2>
-      <p className="uppercase tracking-widest text-sm mb-8">Ваш счет: <span className="text-white font-bold">{score}</span></p>
-      
-      <div className="space-y-4 w-full max-w-sm">
-        <Button onClick={handleRevive} variant="success" className="animate-pulse">
-          📺 ВОСКРЕСНУТЬ (РЕКЛАМА)
-        </Button>
-        <Button onClick={handleShare} variant="secondary">
-          📢 ПОХВАСТАТЬСЯ
-        </Button>
-        <Button onClick={handleBackToMenu} variant="danger">
-          В МЕНЮ
-        </Button>
-      </div>
-    </div>
-  );
-
-  const renderLevelComplete = () => (
-    <div className="flex flex-col min-h-screen bg-[#f0ead6] items-center justify-center p-6">
-       <div className="bg-white border-4 border-[#d4af37] p-8 w-full max-w-sm text-center shadow-xl">
-         <h2 className="text-2xl font-bold uppercase mb-4">Уровень {level} пройден!</h2>
-         <div className="text-4xl text-[#d4af37] mb-6">★★★</div>
-         <Button onClick={handleNextLevel} variant="primary">СЛЕДУЮЩИЙ УРОВЕНЬ</Button>
-       </div>
-    </div>
-  );
 
   return (
-    <>
-      {gameState === GameState.MENU && renderMenu()}
-      {gameState === GameState.LOADING && renderLoading()}
-      {gameState === GameState.PLAYING && renderPlaying()}
-      {gameState === GameState.RESULT && renderResult()}
-      {gameState === GameState.LEVEL_COMPLETE && renderLevelComplete()}
-      {gameState === GameState.GAME_OVER && renderGameOver()}
-      {gameState === GameState.ERROR && (
-         <div className="p-10 text-center">
-            <p className="text-red-600 font-bold">{errorMsg}</p>
-            <Button onClick={handleStartGame} variant="primary" className="mt-4">Перезагрузить</Button>
-         </div>
-      )}
-    </>
+    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white pb-20">
+      {/* Header */}
+      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Gamepad2 className="w-5 h-5 text-white" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight">GameBundler AI</h1>
+          </div>
+          <div className="flex items-center gap-4 text-sm text-slate-400">
+            <span className="hidden sm:inline-block hover:text-indigo-400 transition-colors cursor-help" title="Using Gemini 2.5 Flash">Powered by Google Gemini</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-6 py-12">
+        
+        {/* Hero Section */}
+        <section className="mb-12 text-center">
+          <h2 className="text-4xl md:text-5xl font-extrabold mb-4 bg-gradient-to-r from-indigo-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent bg-[length:200%_auto] animate-gradient">
+            Pack Your Web Game with AI Style
+          </h2>
+          <p className="text-slate-400 max-w-2xl mx-auto text-lg">
+            Upload your HTML5 game files. We'll analyze the code, generate a custom thematic loading screen using Gemini, and bundle everything into a single standalone HTML file.
+          </p>
+        </section>
+
+        {/* Step 1: Upload */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-1 space-y-6">
+            <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-bold border border-slate-700">1</div>
+                <h3 className="font-semibold text-lg">Upload Assets</h3>
+              </div>
+              
+              <FileUploader onFilesSelected={handleFilesSelected} />
+              
+              <FileList files={files} onRemove={handleRemoveFile} />
+
+              {files.length > 0 && (
+                <div className="mt-6">
+                  <label className="block text-sm font-medium text-slate-400 mb-2">Main Entry File (e.g., index.html)</label>
+                  <select 
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    value={mainEntryFile || ''}
+                    onChange={(e) => setMainEntryFile(e.target.value)}
+                  >
+                    <option value="" disabled>Select entry point...</option>
+                    {files.filter(f => f.type === 'html').map(f => (
+                      <option key={f.name} value={f.name}>{f.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Actions Panel */}
+            <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-bold border border-slate-700">2</div>
+                <h3 className="font-semibold text-lg">Generate & Bundle</h3>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-900/30 border border-red-800/50 rounded text-red-300 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={handleGenerate}
+                disabled={files.length === 0 || !mainEntryFile || appState === AppState.GENERATING || appState === AppState.ANALYZING}
+                className={`w-full py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 mb-3 transition-all ${
+                  files.length > 0 && mainEntryFile && appState !== AppState.GENERATING && appState !== AppState.ANALYZING
+                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20' 
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                {appState === AppState.ANALYZING || appState === AppState.GENERATING ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {appState === AppState.ANALYZING ? 'Analyzing Game...' : 'Generating UI...'}
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4" />
+                    Generate Loading Screen
+                  </>
+                )}
+              </button>
+
+              {appState === AppState.PREVIEW || appState === AppState.COMPLETE || appState === AppState.BUNDLING ? (
+                <button
+                  onClick={handleBundle}
+                  disabled={appState === AppState.BUNDLING}
+                  className="w-full py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 transition-all"
+                >
+                  {appState === AppState.BUNDLING ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Bundling Assets...
+                    </>
+                  ) : (
+                    <>
+                      <Box className="w-4 h-4" />
+                      Bundle Everything
+                    </>
+                  )}
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Right Panel: Preview & Result */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Loading Screen Preview */}
+            <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-1 min-h-[400px] h-[500px] flex flex-col relative overflow-hidden">
+               {/* Label Badge */}
+               <div className="absolute top-4 left-4 z-10 bg-slate-950/90 border border-slate-700 px-3 py-1 rounded-full text-xs font-medium text-slate-300 flex items-center gap-2">
+                  <Sparkles className="w-3 h-3 text-indigo-400" />
+                  AI Generated Preview
+               </div>
+
+               {loadingScreenData ? (
+                 <GeneratedPreview data={loadingScreenData} />
+               ) : (
+                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-500">
+                    {appState === AppState.ANALYZING || appState === AppState.GENERATING ? (
+                      <div className="text-center space-y-4">
+                        <div className="relative w-20 h-20 mx-auto">
+                          <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full animate-ping"></div>
+                          <div className="absolute inset-0 border-4 border-t-indigo-500 rounded-full animate-spin"></div>
+                        </div>
+                        <p className="animate-pulse">Dreaming up a theme based on your code...</p>
+                      </div>
+                    ) : (
+                      <>
+                        <Layers className="w-12 h-12 mb-4 opacity-20" />
+                        <p>Upload files and click Generate to see magic.</p>
+                      </>
+                    )}
+                 </div>
+               )}
+            </div>
+
+            {/* Bundle Result */}
+            {appState === AppState.COMPLETE && finalBundleUrl && (
+              <div className="bg-gradient-to-r from-indigo-900/50 to-purple-900/50 border border-indigo-500/30 rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center gap-4">
+                   <div className="w-12 h-12 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
+                      <Code2 className="w-6 h-6 text-white" />
+                   </div>
+                   <div>
+                     <h3 className="font-bold text-lg text-white">Bundle Ready!</h3>
+                     <p className="text-indigo-200 text-sm">Your game + AI loading screen is ready.</p>
+                   </div>
+                </div>
+                <a 
+                  href={finalBundleUrl} 
+                  download="game-bundle.html"
+                  className="whitespace-nowrap px-6 py-3 bg-white text-indigo-900 font-bold rounded-lg hover:bg-indigo-50 transition-colors shadow-lg flex items-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  Download HTML
+                </a>
+              </div>
+            )}
+            
+            {loadingScreenData?.themeDescription && (
+              <div className="bg-slate-900/30 border border-slate-800 rounded-lg p-4 text-sm text-slate-400">
+                <strong className="text-slate-200">AI Analysis:</strong> {loadingScreenData.themeDescription}
+              </div>
+            )}
+
+          </div>
+        </div>
+      </main>
+    </div>
   );
 };
 

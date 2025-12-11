@@ -1,32 +1,22 @@
-export enum GameState {
-  MENU = 'MENU',
-  LOADING = 'LOADING',
-  PLAYING = 'PLAYING',
-  RESULT = 'RESULT',
-  LEVEL_COMPLETE = 'LEVEL_COMPLETE',
-  GAME_OVER = 'GAME_OVER', // Новое состояние
-  ERROR = 'ERROR'
+export interface UploadedFile {
+  name: string;
+  file: File;
+  content: string | ArrayBuffer | null;
+  type: 'html' | 'css' | 'js' | 'image' | 'other';
 }
 
-export interface CartoonEntry {
-  title: string;
-  imageUrl: string;
+export interface LoadingScreenData {
+  html: string;
+  css: string;
+  js: string;
+  themeDescription?: string;
 }
 
-export interface QuestionData {
-  correctAnswer: string;
-  wrongAnswers: string[];
-  imageUrl: string;
-}
-
-export interface QuizRound {
-  question: QuestionData;
-  userSelectedAnswer?: string;
-  isCorrect?: boolean;
-}
-
-declare global {
-  interface Window {
-    vkBridge: any;
-  }
+export enum AppState {
+  IDLE = 'IDLE',
+  ANALYZING = 'ANALYZING',
+  GENERATING = 'GENERATING',
+  PREVIEW = 'PREVIEW',
+  BUNDLING = 'BUNDLING',
+  COMPLETE = 'COMPLETE',
 }

@@ -1,5 +1,5 @@
 {
-  "name": "SovietToon Quiz",
-  "description": "A Soviet-styled quiz game where you guess cartoons from your collection.",
+  "name": "GameBundler AI",
+  "description": "Upload your web game files, generate a custom AI-themed loading screen, and bundle it all into a single HTML file.",
   "requestFramePermissions": []
 }
